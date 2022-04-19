@@ -4,40 +4,43 @@ from operator import itemgetter
 import numpy as np
 import random
 import torch
-from copy import deepcopy
-
-# from utils import normalize
+from utils import normalize, print_success, save_video
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class EvoAttack():
-    def __init__(self, dataset, model, x, y, n_gen=500, pop_size=40, eps=0.3, tournament=35, defense=False):
+    def __init__(self, dataset, model, x, y, n_gen=500, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, defense=False):
         self.dataset = dataset
         self.model = model
         self.x = x
         self.y = y
         self.p_init = 0.1
         self.n_gen = n_gen
-        self.pop_size = pop_size
-        self.n_tournament = tournament
+        self.n_pop = n_pop
+        self.n_tournament = n_tournament
+        self.top_k = top_k
         self.eps = eps
         self.best_x_hat = None
+        self.bad_x_hat = None
         self.queries = 0
         self.defense = defense
         self.min_ball = torch.tile(torch.maximum(self.x - eps, torch.tensor(0)), (1, 1))
         self.max_ball = torch.tile(torch.minimum(self.x + eps, torch.tensor(1)), (1, 1))
 
     def generate(self):
-        save_image(self.x, 'orig.jpg')
+        #save_video(self.x, f'orig_{self.y.item()}.avi')
         gen = 0
         cur_pop = self.init()
         while not self.termination_condition(cur_pop, gen):
             self.fitness(cur_pop)
+
+            print(f'Gen #{gen} best fitness: {min(cur_pop, key=itemgetter(1))[1]:.5f}')
+
             new_pop = []
             elite = self.elitism(cur_pop)
 
             new_pop.append([elite, np.inf])
-            for i in range((self.pop_size - 1) // 3):
+            for i in range((self.n_pop - 1) // 3):
                 parent1 = self.selection(cur_pop)
                 parent2 = self.selection(cur_pop)
                 offspring1, offspring2 = self.crossover(parent1, parent2)
@@ -48,7 +51,7 @@ class EvoAttack():
                 new_pop.append([mut_offspring1, np.inf])
                 new_pop.append([mut_offspring2, np.inf])
 
-            print(f'Elitist: {min(cur_pop, key=itemgetter(1))[1]:.5f}')
+
 
             cur_pop = new_pop
             gen += 1
@@ -56,14 +59,19 @@ class EvoAttack():
         return self.best_x_hat, self.queries
 
     def crossover(self, parent1, parent2):
-        parent1 = parent1[0].flatten()
-        parent2 = parent2[0].flatten()
-        i = np.random.randint(0, len(parent1))
-        j = np.random.randint(i, len(parent1))
-        offspring1 = torch.cat([parent1[:i], parent2[i:j], parent1[j:]], dim = 0)
-        offspring2 = torch.cat([parent2[:i], parent1[i:j], parent2[j:]], dim = 0)
-        offspring1 = offspring1.reshape(self.x.shape)
-        offspring2 = offspring2.reshape(self.x.shape)
+        frames = self.x.shape[2]
+        frame_shape = (self.x.shape[1], self.x.shape[3], self.x.shape[4])
+        offspring1 = parent1[0].clone()
+        offspring2 = parent2[0].clone()
+        for f in range(frames):
+            flat_parent1 = parent1[0][0,:,f].flatten()
+            flat_parent2 = parent2[0][0,:,f].flatten()
+            i = np.random.randint(0, len(flat_parent1))
+            j = np.random.randint(i, len(flat_parent1))
+            cat_frame1 = torch.cat([flat_parent1[:i], flat_parent2[i:j], flat_parent1[j:]], dim = 0)
+            cat_frame2 = torch.cat([flat_parent2[:i], flat_parent1[i:j], flat_parent2[j:]], dim = 0)
+            offspring1[0, :, f] = cat_frame1.reshape(frame_shape)
+            offspring2[0, :, f] = cat_frame2.reshape(frame_shape)
         offspring1 = self.project(offspring1)
         offspring2 = self.project(offspring2)
         return offspring1, offspring2
@@ -79,20 +87,22 @@ class EvoAttack():
         return best
 
     def mutation(self, x_hat):
-        p = self.p_selection(self.p_init, self.queries, self.n_gen * self.pop_size)
-        c = x_hat[0].shape[1]
-        h = x_hat[0].shape[2]
-        w = x_hat[0].shape[3]
-        n_features = c * h * w
-        s = int(round(np.sqrt(p * n_features / c)))
-        s = min(max(s, 1), h - 1)  # at least c x 1 x 1 window is taken and at most c x h-1 x h-1
-        center_h = np.random.randint(0, h - s)
-        center_w = np.random.randint(0, w - s)
-        x_curr_window = x_hat[0][:, :, center_h:center_h + s, center_w:center_w + s]
-        for i in range(c):
-            x_curr_window[:, i] += np.random.choice([-2 * self.eps, 2 * self.eps]) * torch.ones(x_curr_window[:, i].shape).to(device)
+        p = self.p_selection(self.p_init, self.queries, self.n_gen * self.n_pop)
+        channels = x_hat[0].shape[1]
+        frames = x_hat[0].shape[2]
+        height = x_hat[0].shape[3]
+        width = x_hat[0].shape[4]
+        n_features = channels * height * width
+        s = int(round(np.sqrt(p * n_features / channels)))
+        s = min(max(s, 1), height - 1)  # at least c x 1 x 1 window is taken and at most c x h-1 x h-1
+        for f in range(frames):
+            center_h = np.random.randint(0, height - s)
+            center_w = np.random.randint(0, width - s)
+            x_curr_window = x_hat[0][0, :, f, center_h:center_h + s, center_w:center_w + s]
+            for i in range(channels):
+                x_curr_window[i] += np.random.choice([-2 * self.eps, 2 * self.eps]) * torch.ones(x_curr_window[i].shape).to(device)
+            x_hat[0][0, :, f, center_h:center_h + s, center_w: center_w + s] = x_curr_window
 
-        x_hat[0][:, :, center_h:center_h + s, center_w: center_w + s] = x_curr_window
         x_hat = self.project(x_hat[0])
         return x_hat
 
@@ -104,32 +114,39 @@ class EvoAttack():
             if self.defense:
                 def_x_hat = self.defense(def_x_hat.cpu().numpy())[0]
                 def_x_hat = torch.tensor(def_x_hat).to(device)
-            n_x_hat = normalize(self.dataset, def_x_hat)
-            probs = F.softmax(self.model(n_x_hat), dim = 1).squeeze()
-            objective = probs[self.y] - max(x for i, x, in enumerate(probs) if not i == self.y)
-            cur_pop[i] = [x_hat, objective + x_hat_l2]
+            n_x_hat = normalize(def_x_hat)
+            with torch.no_grad():
+                probs = F.softmax(self.model(n_x_hat), dim = 1)[0]
+            preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if not i == self.y])
+            objective = (probs[self.y] - sum(preds_not_y).item()).item()
+            #objective = probs[self.y].item()
+            cur_pop[i] = [x_hat, objective]
 
-    def get_label(self, x_hat):
-        def_x_hat = x_hat.clone()
+    def get_labels(self, x_hat):
+        p_x_hat = self.project(x_hat.clone())
         if self.defense:
-            def_x_hat = self.defense(def_x_hat.cpu().numpy())[0]
-            def_x_hat = torch.tensor(def_x_hat).to(device)
-        n_x_hat = normalize(self.dataset, def_x_hat)
-        return torch.argmax(F.softmax(self.model(n_x_hat), dim = 1))
+            p_x_hat = self.defense(p_x_hat.cpu().numpy())[0]
+            p_x_hat = torch.tensor(p_x_hat).to(device)
+        n_x_hat = normalize(p_x_hat)
+        with torch.no_grad():
+            preds = F.softmax(self.model(n_x_hat), dim = 1)
+        pred_classes = preds.topk(k=self.top_k).indices[0]
+        return pred_classes
 
     def termination_condition(self, cur_pop, gen):
-
         if gen == self.n_gen:
             return True
         for [x_hat, _] in cur_pop:
-            y_hat = self.get_label(x_hat)
+            y_preds = self.get_labels(x_hat)
             self.queries += 1
-            if y_hat != self.y:
-                self.best_x_hat = x_hat
-                save_image(x_hat, 'good.jpg')
+            if self.y not in y_preds:
+                self.best_x_hat = self.project(x_hat)
+                print_success(self.model, self.queries, self.best_x_hat, self.y)
+                #save_video(self.best_x_hat, f'good_{self.y.item()}.avi')
                 return True
-            else:
-                save_image(x_hat, 'bad.jpg')
+            elif not isinstance(self.bad_x_hat, type(None)):
+                self.bad_x_hat = self.project(x_hat)
+                #save_video(self.bad_x_hat, f'bad_{self.y.item()}.avi')
         return False
 
     def project(self, x_hat):
@@ -138,7 +155,7 @@ class EvoAttack():
 
     def init(self):
         cur_pop = []
-        for i in range(self.pop_size):
+        for i in range(self.n_pop):
             x_hat = self.x.clone()
             x_hat = self.vertical_mutation(x_hat)
 
@@ -146,9 +163,14 @@ class EvoAttack():
         return cur_pop
 
     def vertical_mutation(self, x_hat):
-        size = np.asarray(self.x.shape)
-        size[2] = 1
-        x_hat = x_hat + self.eps * torch.tensor(np.random.choice([-1, 1], size=size)).to(device)
+        channels = self.x.shape[1]
+        frames = self.x.shape[2]
+        height = self.x.shape[3]
+        width = self.x.shape[4]
+        for c in range(channels):
+            for f in range(frames):
+                for w in range(width):
+                    x_hat[0, c, f, :, w] += torch.tensor(self.eps * np.random.choice([-1, 1]) * np.ones((height))).to(device)
         x_hat = self.project(x_hat)
         return x_hat
 

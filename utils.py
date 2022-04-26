@@ -46,18 +46,21 @@ def parse():
                         help="Maximal number of videos from dataset")
     parser.add_argument("--tournament", "-t", type=int, default=35,
                         help="Tournament selection")
+    parser.add_argument("--frames", "-f", type=int, default=35,
+                        help="Number of frames to be perturbed in each mutation")
     args = parser.parse_args()
 
     n_videos = args.videos
     dataset = args.dataset
     model = args.model
     tournament = args.tournament
+    n_frames = args.frames
     eps = args.eps
     n_pop = args.pop
     n_gen = args.gen
     n_iter = n_gen * n_pop
 
-    return model, dataset, eps, n_pop, n_gen, n_videos, tournament, n_iter
+    return model, dataset, eps, n_pop, n_gen, n_videos, tournament, n_frames, n_iter
 
 def get_model(model_name):
     if model_name == 'resnet_3d':
@@ -69,7 +72,6 @@ def get_model(model_name):
     else:
         raise Exception('No such model!')
     model = model.eval()
-    model = model.to(device)
     return model
 
 def normalize(x):
@@ -92,12 +94,12 @@ def correctly_classified(model, x, y):
     preds = post_act(preds)
     pred_classes = preds.topk(k=5).indices[0]
     pred_class_names = [kinetics_id_to_classname[int(i)] for i in pred_classes]
-    print("###########################################")
+    print("########################################")
     print("Top names: %s" % ", ".join(pred_class_names))
     print(f'Top labels {np.array2string(np.array(pred_classes.cpu()))}')
     print(f'Original name: {kinetics_id_to_classname[int(y)]}')
     print(f'Original class: {int(y)}')
-    print("###########################################")
+    print("########################################")
     return y in pred_classes
 
 def print_success(model, queries, x, y):
@@ -107,12 +109,43 @@ def print_success(model, queries, x, y):
     preds = post_act(preds)
     pred_classes = preds.topk(k=5).indices[0]
     pred_class_names = [kinetics_id_to_classname[int(i)] for i in pred_classes]
-    print("###########################################")
+    print("########################################")
     print(f'Success!')
     print("Top 5 predicted labels: %s" % ", ".join(pred_class_names))
     print(f'Original class: {kinetics_id_to_classname[int(y)]}')
     print(f'Queries: {queries}')
-    print("###########################################")
+    print("########################################")
+
+def print_failure(model, queries, x, y):
+    normalized_x = normalize(x)
+    preds = model(normalized_x)
+    post_act = torch.nn.Softmax(dim=1)
+    preds = post_act(preds)
+    pred_classes = preds.topk(k=5).indices[0]
+    pred_class_names = [kinetics_id_to_classname[int(i)] for i in pred_classes]
+    print("########################################")
+    print(f'Failure!')
+    print("Top 5 predicted labels: %s" % ", ".join(pred_class_names))
+    print(f'Original class: {kinetics_id_to_classname[int(y)]}')
+    print(f'Queries: {queries}')
+    print("########################################")
+
+def print_summary(dataset, model_name, n_videos, n_pop, n_gen, n_tournament, n_frames, eps, asr, evo_queries):
+    print('########################################')
+    print(f'Summary:')
+    print(f'\tDataset: {dataset}')
+    print(f'\tModel: {model_name}')
+    print(f'\tVideos: {n_videos}')
+    print(f'\tPopulation: {n_pop}')
+    print(f'\tGenerations: {n_gen}')
+    print(f'\tTournament: {n_tournament}')
+    print(f'\tFrames: {n_frames}')
+    print(f'\tMetric: linf, epsilon: {eps:.4f}')
+    print(f'\tEvo:')
+    print(f'\t\tEvo - attack success rate: {asr * 100:.4f}%')
+    print(f'\t\tEvo - queries: {evo_queries}')
+    print(f'\t\tEvo - queries (median): {int(np.median(evo_queries))}')
+    print('########################################')
 
 def save_video(video, fname):
     p_video = video.squeeze(dim=0)
@@ -173,20 +206,24 @@ def get_dataset(n_videos, batch_size=1):
         start_sec = 0
         end_sec = start_sec + clip_duration
         videos = []
-        videos_names = random.choices(os.listdir(dataset_path), k=n_videos)
+
+        videos_dirs = os.listdir(dataset_path)
+        if n_videos > len(videos_dirs):
+            videos_names = videos_dirs
+        else:
+            videos_names = random.choices(os.listdir(dataset_path), k=n_videos)
         for video_name in videos_names:
             for f in os.scandir(dataset_path + '/' + video_name):
                 video = EncodedVideo.from_path(f)
                 video_data = video.get_clip(start_sec=start_sec, end_sec=end_sec)
                 video_data = transform(video_data)
                 inputs = video_data["video"]
-                inputs = inputs.to(device)
                 video_name = video_name.replace('_', ' ')
                 label = classnames_to_id[f'{video_name}']
-                label = torch.tensor(label).to(device)
+                label = torch.tensor(label)
                 videos.append([inputs, label])
                 break
 
         val_loader = DataLoader(videos, batch_size=batch_size, shuffle=True)
 
-        return val_loader
+        return val_loader, videos

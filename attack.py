@@ -4,12 +4,13 @@ from operator import itemgetter
 import numpy as np
 import random
 import torch
-from utils import normalize, print_success, save_video
+from utils import normalize, print_success, print_failure, save_video
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+
 class EvoAttack():
-    def __init__(self, dataset, model, x, y, n_gen=500, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, defense=False):
+    def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, defense=False):
         self.dataset = dataset
         self.model = model
         self.x = x
@@ -26,6 +27,7 @@ class EvoAttack():
         self.defense = defense
         self.min_ball = torch.tile(torch.maximum(self.x - eps, torch.tensor(0)), (1, 1))
         self.max_ball = torch.tile(torch.minimum(self.x + eps, torch.tensor(1)), (1, 1))
+        self.max_l2_norm = F.mse_loss(self.min_ball, self.x).item()
 
     def generate(self):
         #save_video(self.x, f'orig_{self.y.item()}.avi')
@@ -51,8 +53,6 @@ class EvoAttack():
                 new_pop.append([mut_offspring1, np.inf])
                 new_pop.append([mut_offspring2, np.inf])
 
-
-
             cur_pop = new_pop
             gen += 1
 
@@ -75,7 +75,6 @@ class EvoAttack():
         offspring1 = self.project(offspring1)
         offspring2 = self.project(offspring2)
         return offspring1, offspring2
-
 
     def elitism(self, cur_pop):
         elite = min(cur_pop, key=itemgetter(1))[0]
@@ -109,7 +108,8 @@ class EvoAttack():
     def fitness(self, cur_pop):
         for i in range(len(cur_pop)):
             x_hat, fitness = cur_pop[i]
-            x_hat_l2 = F.mse_loss(x_hat, self.x)
+            x_hat_l2 = F.mse_loss(x_hat, self.x).item()
+            n_x_hat_l2 = x_hat_l2 / self.max_l2_norm
             def_x_hat = x_hat.clone()
             if self.defense:
                 def_x_hat = self.defense(def_x_hat.cpu().numpy())[0]
@@ -117,10 +117,9 @@ class EvoAttack():
             n_x_hat = normalize(def_x_hat)
             with torch.no_grad():
                 probs = F.softmax(self.model(n_x_hat), dim = 1)[0]
-            preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if not i == self.y])
+            preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if i != self.y])
             objective = (probs[self.y] - sum(preds_not_y).item()).item()
-            #objective = probs[self.y].item()
-            cur_pop[i] = [x_hat, objective]
+            cur_pop[i] = [x_hat, objective + n_x_hat_l2]
 
     def get_labels(self, x_hat):
         p_x_hat = self.project(x_hat.clone())
@@ -135,6 +134,7 @@ class EvoAttack():
 
     def termination_condition(self, cur_pop, gen):
         if gen == self.n_gen:
+            print_failure(self.model, self.queries, self.bad_x_hat, self.y)
             return True
         for [x_hat, _] in cur_pop:
             y_preds = self.get_labels(x_hat)
@@ -144,7 +144,7 @@ class EvoAttack():
                 print_success(self.model, self.queries, self.best_x_hat, self.y)
                 #save_video(self.best_x_hat, f'good_{self.y.item()}.avi')
                 return True
-            elif not isinstance(self.bad_x_hat, type(None)):
+            elif isinstance(self.bad_x_hat, type(None)):
                 self.bad_x_hat = self.project(x_hat)
                 #save_video(self.bad_x_hat, f'bad_{self.y.item()}.avi')
         return False

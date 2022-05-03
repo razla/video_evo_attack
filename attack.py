@@ -156,19 +156,19 @@ class EvoAttack():
         cur_pop = []
         for i in range(self.n_pop):
             x_hat = self.x.clone()
-            x_hat = self.vertical_mutation(x_hat)
             r_n_frames = np.random.choice(n_frames)
             p_frames = np.random.choice(range(n_frames), r_n_frames)
-            cur_pop.append([x_hat, np.inf])
+            x_hat = self.vertical_mutation(x_hat, p_frames)
+            cur_pop.append([x_hat, p_frames, np.inf])
         return cur_pop
 
-    def vertical_mutation(self, x_hat):
+    def vertical_mutation(self, x_hat, p_frames):
         channels = self.x.shape[1]
-        frames = self.x.shape[2]
+        # frames = self.x.shape[2]
         height = self.x.shape[3]
         width = self.x.shape[4]
         for c in range(channels):
-            for f in range(frames):
+            for f in p_frames:
                 for w in range(width):
                     x_hat[0, c, f, :, w] += torch.tensor(self.eps * np.random.choice([-1, 1]) * np.ones((height))).to(device)
         x_hat = self.project(x_hat)

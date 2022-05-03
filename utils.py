@@ -1,4 +1,3 @@
-from torchvision import datasets
 from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18, mc3_18, r2plus1d_18
 import torch
@@ -46,7 +45,7 @@ def parse():
                         help="Maximal number of videos from dataset")
     parser.add_argument("--tournament", "-t", type=int, default=35,
                         help="Tournament selection")
-    parser.add_argument("--frames", "-f", type=int, default=35,
+    parser.add_argument("--frames", "-f", type=int, default=5,
                         help="Number of frames to be perturbed in each mutation")
     args = parser.parse_args()
 
@@ -155,7 +154,8 @@ def save_video(video, fname):
     write_video(fname, p_video.cpu(), fps=10)
 
 
-def get_dataset(n_videos, batch_size=1):
+def get_dataset(dataset, n_videos, batch_size=1):
+    if dataset == 'kinetics400':
         json_url = "https://dl.fbaipublicfiles.com/pyslowfast/dataset/class_names/kinetics_classnames.json"
         json_filename = "kinetics_classnames.json"
         try:
@@ -181,7 +181,7 @@ def get_dataset(n_videos, batch_size=1):
 
         side_size = 112
         crop_size = 112
-        num_frames = 16
+        num_frames = 64
         sampling_rate = 8
         frames_per_second = 30
 

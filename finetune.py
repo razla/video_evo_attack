@@ -53,7 +53,6 @@ def get_dataset(ds_name, batch_size=32):
     frames_per_second = 30
 
     # Note that this transform is specific to the slow_R50 model.
-    # Note that this transform is specific to the slow_R50 model.
     transform = ApplyTransformToKey(
         key="video",
         transform=Compose(

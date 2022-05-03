@@ -1,4 +1,3 @@
-from torchvision.utils import save_image
 import torch.nn.functional as F
 from operator import itemgetter
 import numpy as np
@@ -7,7 +6,6 @@ import torch
 from utils import normalize, print_success, print_failure, save_video
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
 class EvoAttack():
     def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, defense=False):
@@ -30,7 +28,7 @@ class EvoAttack():
         self.max_l2_norm = F.mse_loss(self.min_ball, self.x).item()
 
     def generate(self):
-        #save_video(self.x, f'orig_{self.y.item()}.avi')
+        save_video(self.x, f'orig_{self.y.item()}.avi')
         gen = 0
         cur_pop = self.init()
         while not self.termination_condition(cur_pop, gen):
@@ -142,11 +140,11 @@ class EvoAttack():
             if self.y not in y_preds:
                 self.best_x_hat = self.project(x_hat)
                 print_success(self.model, self.queries, self.best_x_hat, self.y)
-                #save_video(self.best_x_hat, f'good_{self.y.item()}.avi')
+                save_video(self.best_x_hat, f'good_{self.y.item()}.avi')
                 return True
             elif isinstance(self.bad_x_hat, type(None)):
                 self.bad_x_hat = self.project(x_hat)
-                #save_video(self.bad_x_hat, f'bad_{self.y.item()}.avi')
+                save_video(self.bad_x_hat, f'bad_{self.y.item()}.avi')
         return False
 
     def project(self, x_hat):
@@ -154,11 +152,13 @@ class EvoAttack():
         return projected_x_hat
 
     def init(self):
+        n_frames = self.x.shape[2]
         cur_pop = []
         for i in range(self.n_pop):
             x_hat = self.x.clone()
             x_hat = self.vertical_mutation(x_hat)
-
+            r_n_frames = np.random.choice(n_frames)
+            p_frames = np.random.choice(range(n_frames), r_n_frames)
             cur_pop.append([x_hat, np.inf])
         return cur_pop
 

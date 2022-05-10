@@ -1,7 +1,8 @@
 import torch
 
 from utils import get_model, get_dataset, parse, correctly_classified, print_summary
-from attack import EvoAttack
+# from island_attack import EvoAttack
+from regular_attack import EvoAttack
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -23,7 +24,7 @@ if __name__ == '__main__':
         x = x.to(device)
         y = y.to(device)
 
-        if correctly_classified(model, x, y) and count < n_videos:
+        if correctly_classified(dataset, model, x, y) and count < n_videos:
             count += 1
             adv, n_queries = EvoAttack(dataset=dataset,
                                        model=model,

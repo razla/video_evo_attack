@@ -24,9 +24,14 @@ from pytorchvideo.transforms import (
 random.seed(1)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 models_names = ['resnet_3d', 'resnet_mc', 'resnet_1d']
-dataset_path = '/cs_storage/public_datasets/kinetics400/val'
-datasets_names = ['kinetics400']
+kinetics_dataset_path = '/cs_storage/public_datasets/kinetics400/val'
+ucf101_dataset_path = '/cs_storage/public_datasets/UCF101/UCF-101'
+ucf101_labels_path = '/cs_storage/public_datasets/UCF101/ucfTrainTestlist/classInd.txt'
+hmdb51_dataset_path = '/cs_storage/public_datasets/HMDB51/HMDB-51'
 kinetics_id_to_classname = None
+ucf101_id_to_classname = None
+hmdb51_id_to_classname = None
+datasets_names = ['kinetics400', 'ucf101', 'hmdb51']
 
 def parse():
     parser = argparse.ArgumentParser(
@@ -80,23 +85,26 @@ def normalize(x):
             std = [0.22803, 0.22145, 0.216989]
         ),
     ])
-    # tranposed_x = x.permute(0, 2, 1, 3, 4)
     squeezed_x = x.squeeze(dim=0)
     normalized_img = transform(squeezed_x).unsqueeze(dim=0)
-    # normalized_img = normalized_img.permute(0, 2, 1, 3, 4)
     return normalized_img
 
-def correctly_classified(model, x, y):
+def correctly_classified(dataset, model, x, y):
     normalized_x = normalize(x)
     preds = model(normalized_x)
     post_act = torch.nn.Softmax(dim=1)
     preds = post_act(preds)
     pred_classes = preds.topk(k=5).indices[0]
-    pred_class_names = [kinetics_id_to_classname[int(i)] for i in pred_classes]
+    if dataset == 'kinetics400':
+        pred_class_names = [kinetics_id_to_classname[int(i)] for i in pred_classes]
+        id_to_classname = kinetics_id_to_classname
+    elif dataset == 'ucf101':
+        pred_class_names = [ucf101_id_to_classname[int(i)] for i in pred_classes]
+        id_to_classname = ucf101_id_to_classname
     print("########################################")
     print("Top names: %s" % ", ".join(pred_class_names))
     print(f'Top labels {np.array2string(np.array(pred_classes.cpu()))}')
-    print(f'Original name: {kinetics_id_to_classname[int(y)]}')
+    print(f'Original name: {id_to_classname[int(y)]}')
     print(f'Original class: {int(y)}')
     print("########################################")
     return y in pred_classes
@@ -156,6 +164,7 @@ def save_video(video, fname):
 
 def get_dataset(dataset, n_videos, batch_size=1):
     if dataset == 'kinetics400':
+        dataset_path = kinetics_dataset_path
         json_url = "https://dl.fbaipublicfiles.com/pyslowfast/dataset/class_names/kinetics_classnames.json"
         json_filename = "kinetics_classnames.json"
         try:
@@ -164,7 +173,6 @@ def get_dataset(dataset, n_videos, batch_size=1):
             print('Error downloading json file')
         with open(json_filename, "r") as f:
             kinetics_classnames = json.load(f)
-
         global kinetics_id_to_classname
 
         kinetics_id_to_classname = {}
@@ -179,51 +187,75 @@ def get_dataset(dataset, n_videos, batch_size=1):
             k = k.replace(')', "")
             classnames_to_id[k] = v
 
-        side_size = 112
-        crop_size = 112
-        num_frames = 64
-        sampling_rate = 8
-        frames_per_second = 30
+    elif dataset == 'ucf101':
+        global ucf101_id_to_classname
+        dataset_path = ucf101_dataset_path
+        with open(ucf101_labels_path, "r") as f:
+            ucf101_classnames = f.read().split('\n')
+        classnames_to_id = {}
+        ucf101_id_to_classname = {}
+        for line in ucf101_classnames:
+            id, classname = line.split(' ')
+            classnames_to_id[classname] = int(id)
+            ucf101_id_to_classname[id] = classname
+        f.close()
 
-        # Note that this transform is specific to the slow_R50 model.
-        transform = ApplyTransformToKey(
-            key="video",
-            transform=Compose(
-                [
-                    UniformTemporalSubsample(num_frames),
-                    Lambda(lambda x: x / 255.0),
-                    # NormalizeVideo(mean, std),
-                    ShortSideScale(
-                        size=side_size
-                    ),
-                    CenterCropVideo(crop_size=(crop_size))
-                ]
-            ),
-        )
+    elif dataset == 'hmdb51':
+        global hmdb51_id_to_classname
+        dataset_path = hmdb51_dataset_path
+        classnames_to_id = {}
+        ucf101_id_to_classname = {}
+        for line in ucf101_classnames:
+            id, classname = line.split(' ')
+            classnames_to_id[classname] = int(id)
+            ucf101_id_to_classname[id] = classname
+        f.close()
 
-        # The duration of the input clip is also specific to the model.
-        clip_duration = (num_frames * sampling_rate) / frames_per_second
-        start_sec = 0
-        end_sec = start_sec + clip_duration
-        videos = []
+    side_size = 112
+    crop_size = 112
+    num_frames = 32
+    sampling_rate = 8
+    frames_per_second = 30
 
-        videos_dirs = os.listdir(dataset_path)
-        if n_videos > len(videos_dirs):
-            videos_names = videos_dirs
-        else:
-            videos_names = random.choices(os.listdir(dataset_path), k=n_videos)
-        for video_name in videos_names:
-            for f in os.scandir(dataset_path + '/' + video_name):
-                video = EncodedVideo.from_path(f)
-                video_data = video.get_clip(start_sec=start_sec, end_sec=end_sec)
-                video_data = transform(video_data)
-                inputs = video_data["video"]
-                video_name = video_name.replace('_', ' ')
-                label = classnames_to_id[f'{video_name}']
-                label = torch.tensor(label)
-                videos.append([inputs, label])
-                break
+    # Note that this transform is specific to the slow_R50 model.
+    transform = ApplyTransformToKey(
+        key="video",
+        transform=Compose(
+            [
+                UniformTemporalSubsample(num_frames),
+                Lambda(lambda x: x / 255.0),
+                # NormalizeVideo(mean, std),
+                ShortSideScale(
+                    size=side_size
+                ),
+                CenterCropVideo(crop_size=(crop_size))
+            ]
+        ),
+    )
 
-        val_loader = DataLoader(videos, batch_size=batch_size, shuffle=True)
+    # The duration of the input clip is also specific to the model.
+    clip_duration = (num_frames * sampling_rate) / frames_per_second
+    start_sec = 0
+    end_sec = start_sec + clip_duration
+    videos = []
 
-        return val_loader, videos
+    videos_dirs = os.listdir(dataset_path)
+    if n_videos > len(videos_dirs):
+        videos_names = videos_dirs
+    else:
+        videos_names = random.choices(os.listdir(dataset_path), k=n_videos)
+    for video_name in videos_names:
+        for f in os.scandir(dataset_path + '/' + video_name):
+            video = EncodedVideo.from_path(f)
+            video_data = video.get_clip(start_sec=start_sec, end_sec=end_sec)
+            video_data = transform(video_data)
+            inputs = video_data["video"]
+            video_name = video_name.replace('_', ' ')
+            label = classnames_to_id[video_name]
+            label = torch.tensor(label)
+            videos.append([inputs, label])
+            break
+
+    val_loader = DataLoader(videos, batch_size=batch_size, shuffle=True)
+
+    return val_loader, videos

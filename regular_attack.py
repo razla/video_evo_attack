@@ -8,7 +8,7 @@ from utils import normalize, print_success, print_failure, save_video
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class EvoAttack():
-    def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, defense=False):
+    def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, alpha = 0.05, defense=False):
         self.dataset = dataset
         self.model = model
         self.x = x
@@ -17,8 +17,9 @@ class EvoAttack():
         self.n_gen = n_gen
         self.n_pop = n_pop
         self.n_tournament = n_tournament
-        self.top_k = top_k
         self.eps = eps
+        self.top_k = top_k
+        self.alpha = alpha
         self.best_x_hat = None
         self.bad_x_hat = None
         self.queries = 0
@@ -116,8 +117,8 @@ class EvoAttack():
             with torch.no_grad():
                 probs = F.softmax(self.model(n_x_hat), dim = 1)[0]
             preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if i != self.y])
-            objective = (probs[self.y] - sum(preds_not_y).item()).item()
-            cur_pop[i] = [x_hat, objective + n_x_hat_l2]
+            objective = (probs[self.y] - max(preds_not_y).item()).item()
+            cur_pop[i] = [x_hat, objective + self.alpha * n_x_hat_l2]
 
     def get_labels(self, x_hat):
         p_x_hat = self.project(x_hat.clone())
@@ -156,19 +157,19 @@ class EvoAttack():
         cur_pop = []
         for i in range(self.n_pop):
             x_hat = self.x.clone()
+            x_hat = self.vertical_mutation(x_hat)
             r_n_frames = np.random.choice(n_frames)
             p_frames = np.random.choice(range(n_frames), r_n_frames)
-            x_hat = self.vertical_mutation(x_hat, p_frames)
-            cur_pop.append([x_hat, p_frames, np.inf])
+            cur_pop.append([x_hat, np.inf])
         return cur_pop
 
-    def vertical_mutation(self, x_hat, p_frames):
+    def vertical_mutation(self, x_hat):
         channels = self.x.shape[1]
-        # frames = self.x.shape[2]
+        frames = self.x.shape[2]
         height = self.x.shape[3]
         width = self.x.shape[4]
         for c in range(channels):
-            for f in p_frames:
+            for f in range(frames):
                 for w in range(width):
                     x_hat[0, c, f, :, w] += torch.tensor(self.eps * np.random.choice([-1, 1]) * np.ones((height))).to(device)
         x_hat = self.project(x_hat)

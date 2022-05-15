@@ -7,11 +7,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from utils import get_model, parse_finetune
+
 ucf_data_dir = '/cs_storage/public_datasets/UCF101/UCF-101'
 ucf_label_dir = '/cs_storage/public_datasets/UCF101/ucfTrainTestlist'
 hmdb_data_dir = '/cs_storage/public_datasets/HMDB51'
 model_path = '/home/razla/VideoAttack/scripts/UCF101'
-frames_per_clip = 5
+frames_per_clip = 16
 step_between_clips = 1
 batch_size = 32
 
@@ -26,20 +28,28 @@ def custom_collate(batch):
         filtered_batch.append((video, label))
     return torch.utils.data.dataloader.default_collate(filtered_batch)
 
-def get_dataset(ds_name, batch_size=64):
+def get_dataset(ds_name, batch_size=512):
     if ds_name == 'ucf101':
         tfs = transforms.Compose([
             # TODO: this should be done by a video-level transfrom when PyTorch provides transforms.ToTensor() for video
             # scale in [0, 1] of type float
             transforms.Lambda(lambda x: x / 255.),
-            # Normalize video according to mean and std of pretrained model
-            transforms.Normalize(mean, std),
             # reshape into (T, C, H, W) for easier convolutions
             transforms.Lambda(lambda x: x.permute(0, 3, 1, 2)),
             # rescale to the most common size
             transforms.Lambda(lambda x: nn.functional.interpolate(x, (112, 112))),
+            # Normalize video according to mean and std of pretrained model
+            transforms.Normalize(mean, std),
         ])
 
+        test_data = UCF101(root=ucf_data_dir,
+                           annotation_path=ucf_label_dir,
+                           frames_per_clip=frames_per_clip,
+                           step_between_clips=step_between_clips,
+                           frame_rate=32,
+                           fold=1,
+                           train=False,
+                           transform=tfs, )
 
         train_data = UCF101(root=ucf_data_dir,
                       annotation_path=ucf_label_dir,
@@ -50,14 +60,7 @@ def get_dataset(ds_name, batch_size=64):
                       train=True,
                       transform=tfs, )
 
-        test_data = UCF101(root=ucf_data_dir,
-                      annotation_path=ucf_label_dir,
-                      frames_per_clip=frames_per_clip,
-                      step_between_clips=step_between_clips,
-                      frame_rate=32,
-                      fold=1,
-                      train=False,
-                      transform=tfs, )
+
 
     elif ds_name == 'hmdb51':
         raise Exception('No hmdb51!')
@@ -79,7 +82,6 @@ def train(train_loader, model, num_epochs):
         losses = []
 
         for batch_idx, (data, targets) in enumerate(train_loader):
-            print('Test')
             # Get data to cuda if possible
             data = data.to(device=device)
             data = torch.permute(data, (0, 2, 1, 3, 4))
@@ -131,14 +133,14 @@ def check_accuracy(loader, model):
 
 
 if __name__ == '__main__':
-    num_epochs = 30
-    model = r3d_18(pretrained=True)
+    model_name, dataset, n_epochs, batch_size = parse_finetune()
+    model = get_model(model_name)
     for param in model.parameters():
         param.requires_grad = False
     model.fc = nn.Sequential(
         nn.Linear(512, 101)
     )
     model = model.to(device)
-    train_loader, test_loader = get_dataset('ucf101')
-    train(train_loader, model, num_epochs)
+    train_loader, test_loader = get_dataset(dataset, batch_size)
+    train(train_loader, model, n_epochs)
     check_accuracy(test_loader, model)

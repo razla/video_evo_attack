@@ -31,14 +31,16 @@ hmdb51_dataset_path = '/cs_storage/public_datasets/HMDB51/HMDB-51'
 kinetics_id_to_classname = None
 ucf101_id_to_classname = None
 hmdb51_id_to_classname = None
+parent_dir = None
 datasets_names = ['kinetics400', 'ucf101', 'hmdb51']
 
-def parse():
+def parse_main():
+    global parent_dir
     parser = argparse.ArgumentParser(
         description="Runs Evolutionary Adversarial Attacks on various Deep Learning models")
     parser.add_argument("--model", "-m", choices=models_names, default='custom',
                         help="Run only specific model")
-    parser.add_argument("--dataset", "-da", choices=datasets_names, default='cifar10',
+    parser.add_argument("--dataset", "-da", choices=datasets_names, default='kinetics400',
                         help="Run only specific dataset")
     parser.add_argument("--eps", "-ep", type=float, default=0.1,
                         help="Constrained optimization problem - epsilon")
@@ -64,7 +66,29 @@ def parse():
     n_gen = args.gen
     n_iter = n_gen * n_pop
 
+    parent_dir = f'/home/razla/VideoAttack/scripts/{model}/results'
+
     return model, dataset, eps, n_pop, n_gen, n_videos, tournament, n_frames, n_iter
+
+def parse_finetune():
+    parser = argparse.ArgumentParser(
+        description="Finetune different models")
+    parser.add_argument("--model", "-m", choices=models_names, default='custom',
+                        help="Run only specific model")
+    parser.add_argument("--dataset", "-d", choices=datasets_names, default='ucf101',
+                        help="Run only specific dataset")
+    parser.add_argument("--n_epochs", "-e", type=int, default=30,
+                        help="Number of epochs")
+    parser.add_argument("--batch_size", "-b", type=int, default=64,
+                        help="Batch size")
+    args = parser.parse_args()
+
+    dataset = args.dataset
+    model = args.model
+    n_epochs = args.n_epochs
+    batch_size = args.batch_size
+
+    return model, dataset, n_epochs, batch_size
 
 def get_model(model_name):
     if model_name == 'resnet_3d':
@@ -154,13 +178,16 @@ def print_summary(dataset, model_name, n_videos, n_pop, n_gen, n_tournament, n_f
     print(f'\t\tEvo - queries (median): {int(np.median(evo_queries))}')
     print('########################################')
 
-def save_video(video, fname):
-    p_video = video.squeeze(dim=0)
-    p_video = p_video * 255.0
-    p_video = p_video.to(torch.uint8)
-    p_video = p_video.permute(1, 2, 3, 0)
-    write_video(fname, p_video.cpu(), fps=10)
-
+def save_video(x, y, fname):
+    p_x = x.squeeze(dim=0)
+    p_x = p_x * 255.0
+    p_x = p_x.to(torch.uint8)
+    p_x = p_x.permute(1, 2, 3, 0)
+    dir_path = os.path.join(parent_dir, str(y.item()))
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    file_path = os.path.join(dir_path, fname)
+    write_video(file_path, p_x.cpu(), fps=10)
 
 def get_dataset(dataset, n_videos, batch_size=1):
     if dataset == 'kinetics400':
@@ -205,15 +232,14 @@ def get_dataset(dataset, n_videos, batch_size=1):
         dataset_path = hmdb51_dataset_path
         classnames_to_id = {}
         ucf101_id_to_classname = {}
-        for line in ucf101_classnames:
-            id, classname = line.split(' ')
+        for id, classname in enumerate(os.listdir(hmdb51_dataset_path)):
+            classname = classname.replace('_', ' ')
             classnames_to_id[classname] = int(id)
             ucf101_id_to_classname[id] = classname
-        f.close()
 
     side_size = 112
     crop_size = 112
-    num_frames = 32
+    num_frames = 16
     sampling_rate = 8
     frames_per_second = 30
 

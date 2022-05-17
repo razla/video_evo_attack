@@ -29,7 +29,7 @@ class EvoAttack():
         self.max_l2_norm = F.mse_loss(self.min_ball, self.x).item()
 
     def generate(self):
-        save_video(self.x, f'orig_{self.y.item()}.avi')
+        save_video(self.x, self.y, f'orig_{self.y.item()}.avi')
         gen = 0
         cur_pop = self.init()
         while not self.termination_condition(cur_pop, gen):
@@ -144,11 +144,11 @@ class EvoAttack():
             if self.y not in y_preds:
                 self.best_x_hat = self.project(x_hat)
                 print_success(self.model, self.queries, self.best_x_hat, self.y)
-                save_video(self.best_x_hat, f'good_{self.y.item()}.avi')
+                save_video(self.best_x_hat, self.y, f'good_{self.y.item()}.avi')
                 return True
             elif isinstance(self.bad_x_hat, type(None)):
                 self.bad_x_hat = self.project(x_hat)
-                save_video(self.bad_x_hat, f'bad_{self.y.item()}.avi')
+                save_video(self.bad_x_hat, self.y, f'bad_{self.y.item()}.avi')
         return False
 
     def project(self, x_hat):

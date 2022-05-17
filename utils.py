@@ -2,6 +2,7 @@ from torch.utils.data import DataLoader
 from torchvision.models.video import r3d_18, mc3_18, r2plus1d_18
 import torch
 import argparse
+from argparse import BooleanOptionalAction
 import json
 import urllib
 import random
@@ -44,6 +45,8 @@ def parse_main():
                         help="Run only specific dataset")
     parser.add_argument("--eps", "-ep", type=float, default=0.1,
                         help="Constrained optimization problem - epsilon")
+    parser.add_argument("--k", "-k", type=int, default=5,
+                        help="Top k prediction")
     parser.add_argument("--pop", "-pop", type=int, default=20,
                         help="Population size")
     parser.add_argument("--gen", "-g", type=int, default=1000,
@@ -52,23 +55,23 @@ def parse_main():
                         help="Maximal number of videos from dataset")
     parser.add_argument("--tournament", "-t", type=int, default=35,
                         help="Tournament selection")
-    parser.add_argument("--frames", "-f", type=int, default=5,
-                        help="Number of frames to be perturbed in each mutation")
+    parser.add_argument('--target', dest='target', action=BooleanOptionalAction)
     args = parser.parse_args()
 
     n_videos = args.videos
     dataset = args.dataset
     model = args.model
     tournament = args.tournament
-    n_frames = args.frames
     eps = args.eps
+    top_k = args.k
     n_pop = args.pop
     n_gen = args.gen
+    target = args.target
     n_iter = n_gen * n_pop
 
     parent_dir = f'/home/razla/VideoAttack/scripts/{model}/results'
 
-    return model, dataset, eps, n_pop, n_gen, n_videos, tournament, n_frames, n_iter
+    return model, dataset, eps, top_k, n_pop, n_gen, n_videos, tournament, n_iter, target
 
 def parse_finetune():
     parser = argparse.ArgumentParser(
@@ -161,7 +164,7 @@ def print_failure(model, queries, x, y):
     print(f'Queries: {queries}')
     print("########################################")
 
-def print_summary(dataset, model_name, n_videos, n_pop, n_gen, n_tournament, n_frames, eps, asr, evo_queries):
+def print_summary(dataset, model_name, n_videos, n_pop, n_gen, n_tournament, eps, asr, evo_queries):
     print('########################################')
     print(f'Summary:')
     print(f'\tDataset: {dataset}')
@@ -170,7 +173,6 @@ def print_summary(dataset, model_name, n_videos, n_pop, n_gen, n_tournament, n_f
     print(f'\tPopulation: {n_pop}')
     print(f'\tGenerations: {n_gen}')
     print(f'\tTournament: {n_tournament}')
-    print(f'\tFrames: {n_frames}')
     print(f'\tMetric: linf, epsilon: {eps:.4f}')
     print(f'\tEvo:')
     print(f'\t\tEvo - attack success rate: {asr * 100:.4f}%')

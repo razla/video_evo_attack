@@ -8,7 +8,7 @@ from utils import normalize, print_success, print_failure, save_video
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class EvoAttack():
-    def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, alpha = 0.05, defense=False):
+    def __init__(self, dataset, model, x, y, n_gen=1000, n_pop=40, n_tournament=35, eps=0.3, top_k = 5, alpha = 0.05, target=None):
         self.dataset = dataset
         self.model = model
         self.x = x
@@ -23,10 +23,10 @@ class EvoAttack():
         self.best_x_hat = None
         self.bad_x_hat = None
         self.queries = 0
-        self.defense = defense
+        self.target = target
+        self.rho = 1
         self.min_ball = torch.tile(torch.maximum(self.x - eps, torch.tensor(0)), (1, 1))
         self.max_ball = torch.tile(torch.minimum(self.x + eps, torch.tensor(1)), (1, 1))
-        self.max_l2_norm = F.mse_loss(self.min_ball, self.x).item()
 
     def generate(self):
         save_video(self.x, self.y, f'orig_{self.y.item()}.avi')
@@ -104,20 +104,19 @@ class EvoAttack():
         x_hat = self.project(x_hat[0])
         return x_hat
 
+    def predict(self, x):
+        with torch.no_grad():
+            probs = F.softmax(self.model(x), dim=1)[0]
+        return probs
+
     def fitness(self, cur_pop):
         for i in range(len(cur_pop)):
             x_hat, fitness = cur_pop[i]
-            x_hat_l2 = F.mse_loss(x_hat, self.x).item()
-            n_x_hat_l2 = x_hat_l2 / self.max_l2_norm
             def_x_hat = x_hat.clone()
-            if self.defense:
-                def_x_hat = self.defense(def_x_hat.cpu().numpy())[0]
-                def_x_hat = torch.tensor(def_x_hat).to(device)
             n_x_hat = normalize(def_x_hat)
-            with torch.no_grad():
-                probs = F.softmax(self.model(n_x_hat), dim = 1)[0]
+            probs = self.predict(n_x_hat)
             preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if i != self.y])
-            objective = (probs[self.y] - max(preds_not_y).item()).item()
+            objective = max(0, (probs[self.y] - max(preds_not_y).item()).item())
             cur_pop[i] = [x_hat, objective + self.alpha * n_x_hat_l2]
 
     def get_labels(self, x_hat):
@@ -126,9 +125,8 @@ class EvoAttack():
             p_x_hat = self.defense(p_x_hat.cpu().numpy())[0]
             p_x_hat = torch.tensor(p_x_hat).to(device)
         n_x_hat = normalize(p_x_hat)
-        with torch.no_grad():
-            preds = F.softmax(self.model(n_x_hat), dim = 1)
-        pred_classes = preds.topk(k=self.top_k).indices[0]
+        probs = self.predict(n_x_hat)
+        pred_classes = probs.topk(k=self.top_k).indices[0]
         return pred_classes
 
     def termination_condition(self, cur_pop, gen):

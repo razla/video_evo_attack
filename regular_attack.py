@@ -45,8 +45,8 @@ class EvoAttack():
                 parent1 = self.selection(cur_pop)
                 parent2 = self.selection(cur_pop)
                 offspring1, offspring2 = self.crossover(parent1, parent2)
-                mut_offspring1 = self.mutation((offspring1, np.inf))
-                mut_offspring2 = self.mutation((offspring2, np.inf))
+                mut_offspring1 = self.per_frame_mutation((offspring1, np.inf))
+                mut_offspring2 = self.per_frame_mutation((offspring2, np.inf))
                 offspring1 = self.project(offspring1)
                 new_pop.append([offspring1, np.inf])
                 new_pop.append([mut_offspring1, np.inf])
@@ -54,6 +54,7 @@ class EvoAttack():
 
             cur_pop = new_pop
             gen += 1
+            self.rho *= 0.9
 
         return self.best_x_hat, self.queries
 
@@ -84,7 +85,7 @@ class EvoAttack():
         best = min(selection, key=itemgetter(1))
         return best
 
-    def mutation(self, x_hat):
+    def per_frame_mutation(self, x_hat):
         p = self.p_selection(self.p_init, self.queries, self.n_gen * self.n_pop)
         channels = x_hat[0].shape[1]
         frames = x_hat[0].shape[2]
@@ -100,7 +101,6 @@ class EvoAttack():
             for i in range(channels):
                 x_curr_window[i] += np.random.choice([-2 * self.eps, 2 * self.eps]) * torch.ones(x_curr_window[i].shape).to(device)
             x_hat[0][0, :, f, center_h:center_h + s, center_w: center_w + s] = x_curr_window
-
         x_hat = self.project(x_hat[0])
         return x_hat
 
@@ -109,21 +109,25 @@ class EvoAttack():
             probs = F.softmax(self.model(x), dim=1)[0]
         return probs
 
+    def regularization(self, x_hat):
+        delta = torch.abs(x_hat - self.x)
+        np_delta = np.array(delta.cpu().flatten())
+        reg = sum(max(0, x - self.rho) for i, x in enumerate(np_delta))
+        return reg
+
     def fitness(self, cur_pop):
         for i in range(len(cur_pop)):
             x_hat, fitness = cur_pop[i]
             def_x_hat = x_hat.clone()
+            reg = self.regularization(def_x_hat)
             n_x_hat = normalize(def_x_hat)
             probs = self.predict(n_x_hat)
             preds_not_y = torch.tensor([x for i, x, in enumerate(probs) if i != self.y])
             objective = max(0, (probs[self.y] - max(preds_not_y).item()).item())
-            cur_pop[i] = [x_hat, objective + self.alpha * n_x_hat_l2]
+            cur_pop[i] = [x_hat, objective + reg]
 
     def get_labels(self, x_hat):
         p_x_hat = self.project(x_hat.clone())
-        if self.defense:
-            p_x_hat = self.defense(p_x_hat.cpu().numpy())[0]
-            p_x_hat = torch.tensor(p_x_hat).to(device)
         n_x_hat = normalize(p_x_hat)
         probs = self.predict(n_x_hat)
         pred_classes = probs.topk(k=self.top_k).indices[0]
@@ -151,13 +155,10 @@ class EvoAttack():
         return projected_x_hat
 
     def init(self):
-        n_frames = self.x.shape[2]
         cur_pop = []
         for i in range(self.n_pop):
             x_hat = self.x.clone()
             x_hat = self.vertical_mutation(x_hat)
-            r_n_frames = np.random.choice(n_frames)
-            p_frames = np.random.choice(range(n_frames), r_n_frames)
             cur_pop.append([x_hat, np.inf])
         return cur_pop
 
